@@ -263,3 +263,28 @@
 > **Reference Concept:** `BlockingQueue Architecture & Implementation Mechanics`
 
 ---
+
+### Q. What is the difference between `Future` and `CompletableFuture` in Java?
+- `Future` only supports blocking retrieval (`get()`), lacks callback chaining, cannot combine multiple async tasks, and cannot be manually completed.
+- `CompletableFuture` implements `CompletionStage`, enabling non-blocking pipelines (`thenApply`, `thenCompose`), parallel combination (`thenCombine`, `allOf`), declarative fallback recovery (`exceptionally`, `handle`), and timeout controls (`orTimeout`, `completeOnTimeout`).
+
+---
+
+### Q. What is the difference between `thenApply()` and `thenCompose()` in `CompletableFuture`?
+- **`thenApply(fn)`** works like `Stream.map()`: it takes the resolved value `T` and applies a synchronous transformation returning `U`, yielding `CompletableFuture<U>`.
+- **`thenCompose(fn)`** works like `Stream.flatMap()`: it takes `T` and invokes another asynchronous method returning `CompletableFuture<U>`, flattening the result into `CompletableFuture<U>` instead of `CompletableFuture<CompletableFuture<U>>`.
+
+---
+
+### Q. Why should you pass a custom `Executor` to `CompletableFuture.supplyAsync()` instead of relying on the default pool?
+- Without an explicit `Executor`, `CompletableFuture` uses `ForkJoinPool.commonPool()`, which is shared across the entire JVM (including `parallelStream()`).
+- Running blocking network or database I/O on `commonPool()` can exhaust its small thread count (`CPU cores - 1`) and stall unrelated tasks across the application. Passing a dedicated `ExecutorService` isolates I/O workloads.
+
+---
+
+### Q. How do `exceptionally()`, `handle()`, and `whenComplete()` differ?
+- **`exceptionally(fn)`:** Runs **only on failure** and returns a fallback value to recover the pipeline.
+- **`handle(biFn)`:** Runs **always** (receiving `(result, exception)`) and returns a transformed value or recovery result.
+- **`whenComplete(biConsumer)`:** Runs **always** as a side-effect observer (e.g., logging/metrics) without modifying or swallowing the result or exception.
+
+---

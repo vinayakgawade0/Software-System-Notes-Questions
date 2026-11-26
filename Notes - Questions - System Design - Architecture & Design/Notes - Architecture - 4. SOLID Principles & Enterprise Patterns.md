@@ -93,8 +93,8 @@ The Spring Framework is an architectural manifestation of the SOLID principles. 
 flowchart TD
     Client[HTTP Client Request] --> Controller[1. SRP: RestController Handles HTTP]
     Controller --> Service[1. SRP: Service Executes Business Logic]
-    Service --> Repo[1. SRP & 5. DIP: Repository Interface]
-    Repo --> DB[(Database: Concrete Impl)]
+    Service --> Repo["1. SRP & 5. DIP: Repository Interface"]
+    Repo --> DB[("Database: Concrete Impl")]
 
     subgraph 2. OCP: Strategy Pattern
         Service --> StrategyMap{Map of Processors}
@@ -241,7 +241,7 @@ flowchart TD
     Patterns --> Creational[Creational Patterns]
     Patterns --> Structural[Structural Patterns]
     Patterns --> Behavioral[Behavioral Patterns]
-    Patterns --> EnterpriseArch[Enterprise & Resiliency Patterns]
+    Patterns --> EnterpriseArch["Enterprise & Resiliency Patterns"]
 
     Creational --> Sing[Singleton: Spring Beans, Caches]
     Creational --> Fact[Factory Method: Driver / Client Spawning]

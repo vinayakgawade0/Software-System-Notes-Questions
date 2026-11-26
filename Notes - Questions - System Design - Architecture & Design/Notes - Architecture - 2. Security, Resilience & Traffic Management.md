@@ -10,9 +10,9 @@ Denial of Service (DoS) and Distributed Denial of Service (DDoS) attacks aim to 
 ```mermaid
 flowchart TD
     Internet((Public Internet)) --> Layer1[Layer 1: Edge Perimeter WAF / CDN]
-    Layer1 -->|Scrubbed Layer 3/4 & Bad IPs| Layer2[Layer 2: API Gateway Traffic Control]
-    Layer2 -->|Authenticated & Rate-Limited| Layer3[Layer 3: Microservice Application Layer]
-    Layer3 --> DB[(Databases & Internal Services)]
+    Layer1 -->|"Scrubbed Layer 3/4 & Bad IPs"| Layer2[Layer 2: API Gateway Traffic Control]
+    Layer2 -->|"Authenticated & Rate-Limited"| Layer3[Layer 3: Microservice Application Layer]
+    Layer3 --> DB[("Databases & Internal Services")]
 ```
 
 #### Layer 1: Edge Perimeter (WAF & CDN)
@@ -185,8 +185,8 @@ In monolithic architectures, services communicated over fixed, static IP address
 flowchart TD
     subgraph Client-Side Discovery (Eureka)
         Client1[Service A Client] -->|1. Query Endpoints| Registry[Service Registry / Eureka]
-        Registry -.->|Return [IP1, IP2]| Client1
-        Client1 -->|2. Direct Request (Client LB)| Inst1[Service B: Instance 1]
+        Registry -.->|"Return: IP1, IP2"| Client1
+        Client1 -->|"2. Direct Request (Client LB)"| Inst1[Service B: Instance 1]
     end
 
     subgraph Server-Side Discovery (Kubernetes)

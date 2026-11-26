@@ -292,7 +292,7 @@ The **Adapter Pattern** allows two incompatible interfaces to collaborate by con
 flowchart LR
     Client[Application Client] -->|Calls Standard Domain Interface| Target[Target: PaymentProcessor]
     Target <|.. Adapter[Adapter: StripeAdapter]
-    Adapter -->|Translates & Wraps| Adaptee[Adaptee: StripeService Vendor SDK]
+    Adapter -->|"Translates & Wraps"| Adaptee[Adaptee: StripeService Vendor SDK]
 ```
 
 - **Target Interface:** The clean domain contract expected by your application (`PaymentProcessor`).

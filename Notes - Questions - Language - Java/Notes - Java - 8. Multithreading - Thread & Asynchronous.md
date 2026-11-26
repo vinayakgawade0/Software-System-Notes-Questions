@@ -350,3 +350,97 @@ CompletableFuture.supplyAsync(() -> fetchUser(userId))
         return "Default Notification";
     });
 ```
+
+## `CompletableFuture` & Asynchronous Programming (Java 8+)
+
+### 1. Why `CompletableFuture` Over `Future`?
+Traditional `java.util.concurrent.Future` has major limitations:
+- **Blocking retrieval:** Calling `future.get()` blocks the calling thread until completion.
+- **No chaining/callbacks:** Cannot attach non-blocking transformations (`thenApply`) when a result arrives.
+- **No composition:** Difficult to combine multiple dependent or independent async tasks cleanly.
+- **No declarative error handling:** Exceptions are wrapped inside `ExecutionException` only when `.get()` is called.
+- **Cannot be completed manually:** `CompletableFuture<T>` implements both `Future<T>` and `CompletionStage<T>`, allowing manual completion via `complete(value)` or `completeExceptionally(ex)`.
+
+---
+
+### 2. Thread Pool Execution (`ForkJoinPool` vs. Custom `Executor`)
+- By default, `*Async` methods without an `Executor` argument run on `ForkJoinPool.commonPool()` (sized to `Runtime.getRuntime().availableProcessors() - 1`).
+- **Production Best Practice:** Always pass a dedicated `ExecutorService` for blocking I/O tasks (REST calls, DB queries) so slow I/O does not starve `commonPool()` used by parallel streams and other async tasks.
+
+---
+
+### 3. Core API Categories
+
+#### A. Creating Asynchronous Tasks
+- `CompletableFuture.runAsync(Runnable, executor)`: Runs a background task that returns no result (`CompletableFuture<Void>`).
+- `CompletableFuture.supplyAsync(Supplier<T>, executor)`: Runs a background task that returns a value (`CompletableFuture<T>`).
+- `CompletableFuture.completedFuture(value)`: Returns an already-completed future (useful for caching or mock fallbacks).
+
+#### B. Transforming & Consuming Results (Callbacks)
+- `thenApply(Function<T, U>)`: Transforms the result synchronously and returns `CompletableFuture<U>` (analogous to `Stream.map()`).
+- `thenAccept(Consumer<T>)`: Consumes the result without returning a value (`CompletableFuture<Void>`).
+- `thenRun(Runnable)`: Executes an action after completion without accessing the previous result.
+- *Note:* `*Async` variants (`thenApplyAsync`, `thenAcceptAsync`) execute the callback on another worker thread (or custom `Executor`) rather than the thread that completed the previous stage.
+
+#### C. Composing Dependent & Independent Futures
+- **`thenCompose(Function<T, CompletionStage<U>>)`:** Chains two **dependent** async calls sequentially without nesting `CompletableFuture<CompletableFuture<U>>` (analogous to `Stream.flatMap()`).
+- **`thenCombine(otherFuture, BiFunction<T, U, R>)`:** Runs two **independent** futures in parallel and merges their results once both complete.
+- **`allOf(cf1, cf2, ...)`:** Waits for **all** provided futures to complete (`CompletableFuture<Void>`); results are extracted individually via `.join()`.
+- **`anyOf(cf1, cf2, ...)`:** Completes as soon as **any one** of the provided futures completes (`CompletableFuture<Object>`).
+
+#### D. Exception Handling & Timeouts (Java 9+)
+- **`exceptionally(Function<Throwable, T>)`:** Recovers from an exception by returning a fallback value (similar to `catch`).
+- **`handle(BiFunction<T, Throwable, U>)`:** Always executes on both success and failure (`result` or `ex` will be non-null) and transforms the outcome.
+- **`whenComplete(BiConsumer<T, Throwable>)`:** Inspects result or exception for logging/metrics without altering the outcome.
+- **`orTimeout(long timeout, TimeUnit)` (Java 9+):** Fails the future with `TimeoutException` if not completed within the deadline.
+- **`completeOnTimeout(T defaultValue, long timeout, TimeUnit)` (Java 9+):** Resolves with a fallback default value if the deadline expires.
+
+---
+
+### 4. Real-World Enterprise Use Cases
+
+#### Use Case 1: Parallel Microservice / API Aggregation (Scatter-Gather)
+Fetching user profile, account balances, and recent orders concurrently for a dashboard endpoint instead of sequential blocking calls:
+```java
+ExecutorService ioExecutor = Executors.newFixedThreadPool(10);
+
+CompletableFuture<UserProfile> profileFuture =
+    CompletableFuture.supplyAsync(() -> userClient.getProfile(userId), ioExecutor);
+
+CompletableFuture<List<Order>> ordersFuture =
+    CompletableFuture.supplyAsync(() -> orderClient.getRecentOrders(userId), ioExecutor)
+                     .completeOnTimeout(List.of(), 2, TimeUnit.SECONDS);
+
+CompletableFuture<DashboardResponse> dashboardFuture =
+    profileFuture.thenCombine(ordersFuture, DashboardResponse::new);
+
+DashboardResponse response = dashboardFuture.join();
+```
+*Impact:* Total latency drops from `sum(latencies)` to `max(latencies)`, with graceful degradation if the non-critical orders service times out.
+
+#### Use Case 2: Dependent Multi-Step Workflow (`thenCompose`)
+Authenticating to obtain a token, then fetching customer portfolio data using that token:
+```java
+CompletableFuture<Portfolio> portfolioFuture =
+    CompletableFuture.supplyAsync(() -> authClient.fetchToken(clientId), ioExecutor)
+        .thenCompose(token -> CompletableFuture.supplyAsync(
+            () -> portfolioClient.getPortfolio(token, accountId), ioExecutor))
+        .exceptionally(ex -> Portfolio.emptyFallback());
+```
+
+#### Use Case 3: Parallel Batch Processing with `allOf`
+Processing a batch of financial documents or notifications concurrently and collecting all results:
+```java
+List<CompletableFuture<ProcessResult>> futures = documents.stream()
+    .map(doc -> CompletableFuture.supplyAsync(() -> processor.process(doc), ioExecutor))
+    .toList();
+
+CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+
+List<ProcessResult> results = futures.stream()
+    .map(CompletableFuture::join)
+    .toList();
+```
+
+#### Use Case 4: Racing Redundant Replicas / Cache vs. Database (`anyOf`)
+Querying two read replicas or cache nodes simultaneously and returning whichever responds first.

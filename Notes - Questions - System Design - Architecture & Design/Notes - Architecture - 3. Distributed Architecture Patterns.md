@@ -29,7 +29,7 @@ An **API Gateway** acts as the single, unified ingress entry point for all exter
 
 ```mermaid
 flowchart LR
-    Client[Web & Mobile Clients] -->|Single HTTPS Endpoint| Gateway[API Gateway]
+    Client["Web & Mobile Clients"] -->|Single HTTPS Endpoint| Gateway[API Gateway]
     subgraph Internal VPC (Private Network)
         Gateway -->|Internal Routing| Svc1[Product Service]
         Gateway -->|Internal Routing| Svc2[Pricing Service]
@@ -260,9 +260,9 @@ In a microservices architecture, the **Database-per-Service** pattern dictates t
 
 ```mermaid
 flowchart LR
-    OrderSvc[Order Service] --> OrderDB[(Order DB)]
-    BillingSvc[Billing Service] --> BillingDB[(Billing DB)]
-    InventorySvc[Inventory Service] --> InventoryDB[(Inventory DB)]
+    OrderSvc[Order Service] --> OrderDB[("Order DB")]
+    BillingSvc[Billing Service] --> BillingDB[("Billing DB")]
+    InventorySvc[Inventory Service] --> InventoryDB[("Inventory DB")]
 ```
 
 - When placing an order, the system must:
@@ -299,7 +299,7 @@ sequenceDiagram
 ```mermaid
 flowchart TD
     subgraph Choreography: Event-Driven
-        S1[Order Service] -->|OrderCreated Event| Kafka[(Kafka Topic)]
+        S1[Order Service] -->|OrderCreated Event| Kafka[("Kafka Topic")]
         Kafka --> S2[Payment Service]
         S2 -->|PaymentSucceeded Event| Kafka
         Kafka --> S3[Inventory Service]
@@ -340,11 +340,11 @@ flowchart LR
     Client -->|POST /orders| CmdAPI[Command API]
     Client -->|GET /orders/summary| QryAPI[Query API]
 
-    CmdAPI --> WriteDB[(Write DB: PostgreSQL 3NF)]
+    CmdAPI --> WriteDB[("Write DB: PostgreSQL 3NF")]
     WriteDB -->|Transactional Outbox| Debezium[Debezium CDC]
-    Debezium --> Kafka[(Kafka Event Bus)]
+    Debezium --> Kafka[("Kafka Event Bus")]
     Kafka --> Projector[Async View Projector]
-    Projector --> ReadDB[(Read DB: Elasticsearch / Redis)]
+    Projector --> ReadDB[("Read DB: Elasticsearch / Redis")]
     QryAPI --> ReadDB
 ```
 

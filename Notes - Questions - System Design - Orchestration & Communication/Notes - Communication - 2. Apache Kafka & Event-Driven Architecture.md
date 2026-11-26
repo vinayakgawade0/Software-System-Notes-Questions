@@ -15,20 +15,20 @@ This model suffers from critical architectural vulnerabilities:
 ```mermaid
 flowchart LR
     subgraph Synchronous_Spaghetti["Point-to-Point Synchronous HTTP (Brittle)"]
-        OS1["Order Service"] -->|HTTP POST| PS1["Payment Service"]
-        OS1 -->|HTTP POST| IS1["Inventory Service"]
-        OS1 -->|HTTP POST| NS1["Notification Service"]
-        OS1 -->|HTTP POST (Slow)| AS1["Analytics Service (Bottleneck)"]
-        OS1 -->|HTTP POST (Down)| BS1["Billing Service (Data Loss!)"]
+        OS1["Order Service"] -->|"HTTP POST"| PS1["Payment Service"]
+        OS1 -->|"HTTP POST"| IS1["Inventory Service"]
+        OS1 -->|"HTTP POST"| NS1["Notification Service"]
+        OS1 -->|"HTTP POST (Slow)"| AS1["Analytics Service (Bottleneck)"]
+        OS1 -->|"HTTP POST (Down)"| BS1["Billing Service (Data Loss)"]
     end
 
     subgraph Event_Driven["Kafka Distributed Event Stream (Decoupled)"]
-        OS2["Order Service"] -->|Publish Event| KT["Kafka: orders-topic"]
-        KT -->|Pull Batch| PS2["Payment Service"]
-        KT -->|Pull Batch| IS2["Inventory Service"]
-        KT -->|Pull Batch| NS2["Notification Service"]
-        KT -->|Pull at Own Pace| AS2["Analytics Service"]
-        KT -->|Resume from Offset| BS2["Billing Service"]
+        OS2["Order Service"] -->|"Publish Event"| KT["Kafka: orders-topic"]
+        KT -->|"Pull Batch"| PS2["Payment Service"]
+        KT -->|"Pull Batch"| IS2["Inventory Service"]
+        KT -->|"Pull Batch"| NS2["Notification Service"]
+        KT -->|"Pull at Own Pace"| AS2["Analytics Service"]
+        KT -->|"Resume from Offset"| BS2["Billing Service"]
     end
 ```
 

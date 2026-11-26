@@ -81,7 +81,7 @@ flowchart TD
     Queue -->|Event Notification| Worker["Layer 4: Background Workers (AWS Lambda / Worker Nodes)"]
     Compute -->|Transactional SQL Queries| DB[("Layer 5A: RDS PostgreSQL")]
     Worker -->|Transactional SQL Writes| DB
-    Compute -->|Unstructured Uploads & Exports| S3[("Layer 5B: Amazon S3 Buckets")]
+    Compute -->|"Unstructured Uploads & Exports"| S3[("Layer 5B: Amazon S3 Buckets")]
     Worker -->|Batch File Processing| S3
 ```
 

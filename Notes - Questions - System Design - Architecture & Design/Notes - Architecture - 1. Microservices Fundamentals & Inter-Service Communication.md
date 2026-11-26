@@ -23,9 +23,9 @@ In an enterprise core banking architecture, business capabilities are partitione
 flowchart TD
     Client[API Gateway / Frontend] -->|HTTPS / JSON| AccSvc[Account Service]
     Client -->|HTTPS / JSON| TxSvc[Transaction Service]
-    AccSvc -->|Private DB| AccDB[(Account DB)]
-    TxSvc -->|Private DB| TxDB[(Transaction DB)]
-    TxSvc -->|Publish Event| EventBus[(Kafka Cluster)]
+    AccSvc -->|Private DB| AccDB[("Account DB")]
+    TxSvc -->|Private DB| TxDB[("Transaction DB")]
+    TxSvc -->|Publish Event| EventBus[("Kafka Cluster")]
     EventBus -->|Consume Event| NotifSvc[Notification Service]
 ```
 
@@ -91,7 +91,7 @@ flowchart LR
     Gateway --> Svc[Microservice Pod]
     Svc -->|Check L1| L1[L1: Caffeine Cache JVM]
     L1 -.->|Miss| L2[L2: Redis Cluster]
-    L2 -.->|Miss| DB[(Primary Database)]
+    L2 -.->|Miss| DB[("Primary Database")]
 ```
 
 #### Cache Read/Write Patterns
@@ -249,13 +249,13 @@ If the database commit succeeds but the network call to Kafka times out or the b
 
 ```mermaid
 flowchart LR
-    App[Order Service] -->|ACID Transaction| DB[(Database)]
+    App[Order Service] -->|ACID Transaction| DB[("Database")]
     subgraph DB
         OrderTable[Order Table]
         OutboxTable[Outbox Table]
     end
     DB -.->|Read Binlog / WAL| Debezium[Debezium CDC]
-    Debezium -->|Reliable Publish| Kafka[(Apache Kafka)]
+    Debezium -->|Reliable Publish| Kafka[("Apache Kafka")]
     Kafka --> Downstream[Downstream Services]
 ```
 
@@ -318,7 +318,7 @@ To modify an existing schema or database structure without system downtime, exec
 ```mermaid
 flowchart TD
     subgraph Phase 1: Expand
-        E1[Deploy Provider: Support both old 'name' & new 'firstName/lastName']
+        E1["Deploy Provider: Support both old name & new firstName/lastName"]
         E2[DB: Add new columns alongside old column]
         E3[Write to both; Read from old]
     end
@@ -350,7 +350,7 @@ A frequent mistake made by teams transitioning from monoliths to microservices i
 ```mermaid
 flowchart TD
     subgraph Tight Coupling via Common Library
-        Commons[commons.jar: Shared Entities & Logic]
+        Commons["commons.jar: Shared Entities & Logic"]
         Commons --> SvcA[Service A: Orders]
         Commons --> SvcB[Service B: Billing]
         Commons --> SvcC[Service C: Inventory]
