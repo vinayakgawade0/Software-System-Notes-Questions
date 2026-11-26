@@ -89,3 +89,10 @@
 > **Reference Concept:** `Smart vs Dumb Components & Input/Output Communication`
 
 ---
+
+### Q. How do you migrate an older Angular application (e.g., v14 → v19/v21) safely?
+- Upgrade **one major version at a time** via `ng update @angular/core@X @angular/cli@X` using `update.angular.dev`.
+- Run official Angular CLI schematics (`standalone`, `control-flow`, `inject-function`) incrementally after each hop.
+- Verify third-party dependencies, unit tests, and build pipelines at every major version before proceeding to the next.
+
+---

@@ -29,6 +29,11 @@ Angular has evolved through three major architectural eras since AngularJS:
   - *The "Modern" Era (v17–v19):* Built-in control flow (`@if`, `@for`), Zoneless support, Signals as the reactivity standard.
 - **LTS & Support Policy:** Each major release receives **6 months of active support** followed by **12 months of Long-Term Support (LTS)** before reaching End-of-Life (EOL). Production teams target the latest LTS release.
 
+## Safe Major Version Migration Strategy (e.g., v14 → v19/v21)
+- Upgrade **one major version at a time** using `ng update @angular/core@X @angular/cli@X` following the official Angular Update Guide (`update.angular.dev`).
+- Apply built-in migration schematics incrementally (`standalone`, `control-flow`, `inject-function`) rather than rewriting manually.
+- Validate third-party library compatibility, unit tests, and SonarQube quality gates at each major step before advancing.
+
 ---
 
 ### Angular CLI Workflow & Core Commands

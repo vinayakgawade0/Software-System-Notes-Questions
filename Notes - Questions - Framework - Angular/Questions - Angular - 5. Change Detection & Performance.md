@@ -38,3 +38,18 @@
 > **Reference Concept:** `Performance Optimization Techniques & trackBy`
 
 ---
+
+### Q. How do `signal()`, `computed()`, `linkedSignal()`, and `effect()` differ?
+- **`signal()`:** Holds base writable reactive state.
+- **`computed()`:** Read-only derived state; lazy and memoized until dependencies change.
+- **`linkedSignal()`:** Writable derived state that auto-resets whenever its source signal updates.
+- **`effect()`:** Executes side effects (DOM, analytics, storage) when tracked signals change—not for deriving state.
+
+### Q. Why is `track` mandatory in `@for`, and how does it improve performance?
+- `track` provides a unique identity key (e.g., `item.id`) per item so when an array mutates, Angular updates or moves only the changed DOM nodes instead of tearing down and recreating every element in the list.
+
+### Q. How does `OnPush` improve performance, and what common mistake breaks it?
+- **How:** Skips checking the component subtree unless an `@Input()` reference changes, a local DOM event fires, an `async` pipe emits, or a Signal read in the template updates.
+- **What breaks it:** Mutating an object or array in place (`this.items.push(x)`) instead of passing a new immutable reference (`this.items = [...this.items, x]`).
+
+---

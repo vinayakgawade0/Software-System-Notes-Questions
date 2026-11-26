@@ -80,3 +80,18 @@ trackById(index: number, user: { id: number }): number {
 ```
 
 ---
+
+## Modern Signals & Zoneless Change Detection (v16–v21)
+- **`signal(initialValue)`:** Writable reactive primitive (`set()`, `update()`) providing fine-grained reactivity without checking the entire component tree.
+- **`computed(() => ...)`:** Read-only derived signal; lazy and memoized—recomputes only when read and a dependent signal changes.
+- **`linkedSignal()` (v19+):** Writable derived signal that resets automatically when its source signal updates (e.g., resetting a child dropdown selection when a parent category changes).
+- **`effect(() => ...)`:** Side-effect runner (logging, `localStorage` sync, DOM APIs) triggered when tracked signals change; avoid mutating state inside `effect`.
+- **Signal Component APIs:** `input()`, `input.required()`, `output()`, and `model()` (two-way binding) replace `@Input()` / `@Output()` decorators.
+- **`resource()` / `httpResource()`:** Declarative async data loading tied to signals, exposing `value()`, `isLoading()`, and `error()`.
+- **Zoneless Change Detection:** Removes `zone.js` monkey-patching; UI updates are scheduled directly by Signals, `async` pipe, DOM events, or `ChangeDetectorRef.markForCheck()`.
+
+## Modern Control Flow & `@defer` (v17+)
+- **`@for` & mandatory `track`:** Replaces `*ngFor` + `trackBy`. Requiring `track item.id` lets Angular reuse and move existing DOM nodes instead of destroying and recreating the list.
+- **`@defer` Blocks:** Declaratively lazy-loads heavy child components/bundles on triggers (`on viewport`, `on interaction`, `on idle`, `when condition`) with `@placeholder`, `@loading`, and `@error` states.
+
+---
