@@ -133,6 +133,49 @@ Before implementing complex sharding, systems deploy an in-memory distributed ca
 * **Cache-Aside (Lazy Loading):** The application checks Redis. On cache hit, it returns immediately; on cache miss, it reads from PostgreSQL, populates Redis with a Time-To-Live (TTL), and returns.
 * **Impact:** Offloads up to 80–90% of repeated read traffic from the database engine, preserving database buffer pool RAM and CPU for writes.
 
+## Table Partitioning vs Database Sharding
+
+### Table Partitioning Single-Instance Scaling
+Table partitioning splits a single large logical table into smaller physical segments (partitions) **within the same database server instance**. The database engine transparently routes queries to the relevant partition(s) via **partition pruning** while preserving a single schema and ACID transaction scope.
+
+- **Common Partitioning Strategies:**
+  - **Range Partitioning:** Splits rows by continuous ranges such as timestamps (`created_at` monthly/yearly partitions) or numeric IDs—ideal for time-series logs, orders, and audit tables.
+  - **List Partitioning:** Splits rows by discrete categorical values such as `region` (`'IN'`, `'US'`, `'EU'`) or `tenant_tier`.
+  - **Hash Partitioning:** Distributes rows evenly across a fixed number of partitions using `hash(partition_key) % N` when data lacks a natural range or list skew.
+- **Scaling Problems Addressed:**
+  - Shrinks B-Tree index depth and keeps active ("hot") partitions resident in RAM/buffer cache.
+  - Speeds up maintenance operations: dropping or archiving old historical data becomes an instant `DROP TABLE` / `DETACH PARTITION` metadata operation instead of an expensive row-by-row `DELETE` that causes table bloat and vacuum overhead.
+- **Limitation:** Remains bounded by the vertical hardware limits (CPU, RAM, disk IOPS, network bandwidth) of a single primary database server.
+
+### Database Sharding Horizontal Multi-Node Scaling
+Database sharding partitions data horizontally **across multiple independent database nodes (servers)**, where each shard holds a distinct subset of rows with an identical schema (shared-nothing architecture).
+
+- **Shard Key & Routing:**
+  - Every query ideally includes the **shard key** (e.g., `tenant_id`, `customer_id`, `account_id`) so a routing layer (application router, Vitess, Citus, or proxy) directs traffic to the exact target shard.
+  - **Range-Based Sharding:** Maps contiguous key ranges to specific nodes (risks hotspotting on newest ranges).
+  - **Hash / Consistent-Hash Sharding:** Applies a hash function to the shard key to distribute write load uniformly across nodes and minimize data movement when adding shards.
+  - **Directory-Based Sharding:** Uses a lookup service mapping each tenant/entity ID to its physical shard (flexible rebalancing, but the lookup store becomes a critical dependency).
+- **Scaling Problems Addressed:**
+  - Scales **write throughput**, total storage capacity, and compute beyond what any single machine can vertically sustain.
+  - Provides fault and noisy-neighbor isolation—degradation on one shard impacts only the subset of tenants/users mapped to it.
+- **Operational Trade-Offs:**
+  - Cross-shard queries (scatter-gather joins, global `ORDER BY` / aggregations) incur high network latency.
+  - Distributed transactions across shards require complex coordination (Saga / 2PC), and resharding/rebalancing data requires careful dual-write or CDC migration pipelines.
+
+### Architectural Comparison and Selection Criteria
+| Dimension | Table Partitioning | Database Sharding |
+| :--- | :--- | :--- |
+| **Physical Topology** | Single database server/cluster | Multiple independent database nodes |
+| **Primary Bottleneck Solved** | Large table/index bloat, slow scans, bulk data retention/archival | Single-node write IOPS ceiling, massive total storage, multi-tenant isolation |
+| **Cross-Partition / Shard Joins** | Handled natively by the DB query planner | Expensive scatter-gather across network boundaries |
+| **ACID Transactions** | Standard local ACID transactions | Local ACID within a single shard; eventual consistency across shards |
+| **Operational Complexity** | Low (native DDL support in PostgreSQL, MySQL, Oracle) | High (shard routing, resharding, cross-shard schema migrations, backups) |
+
+- **Decision Rule:**
+  1. Start with **indexing, query tuning, connection pooling, read replicas, and caching**.
+  2. Introduce **Table Partitioning** when a single table grows to tens/hundreds of millions of rows, index sizes exceed memory, or time-based archival is required, while single-node write capacity is still sufficient.
+  3. Adopt **Database Sharding** only when write IOPS, working-set RAM, or total storage exceeds the vertical limit of a single primary server—or when strict tenant-level physical isolation is required.
+
 ---
 
 ## Enterprise Connection Pooling in Java and Spring Boot

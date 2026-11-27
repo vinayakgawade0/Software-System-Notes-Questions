@@ -179,3 +179,68 @@
 - **`@RestControllerAdvice` (REST APIs / JSON):**
   - Meta-annotation combining `@ControllerAdvice` and `@ResponseBody`.
   - Completely bypasses the `ViewResolver` and routes the returned Java error object directly to an `HttpMessageConverter` (like Jackson) to serialize into raw JSON written directly to the HTTP response stream.
+
+## REST API Design Evolution and Governance
+
+### Resource Naming and URI Modeling
+- **Resource-Oriented Nouns:** Model URIs around plural domain nouns representing resources, never RPC-style action verbs:
+  - Good: `GET /api/v1/orders/{orderId}/items`
+  - Avoid: `POST /api/v1/getOrderItems` or `POST /api/v1/deleteOrder`
+- **Hierarchical Nesting & Query Parameters:**
+  - Use path segments for strict parent-child ownership (`/customers/{customerId}/accounts`), limiting nesting depth to 2–3 levels.
+  - Use query parameters for filtering, sorting, and pagination (`GET /api/v1/orders?status=CONFIRMED&sort=createdAt,desc&page=0&size=20`).
+- **Consistency Conventions:** Use lowercase kebab-case (`/order-items`), consistent pluralization, and stable opaque identifiers (UUIDs or public IDs rather than internal auto-increment sequence numbers).
+
+### HTTP Methods Idempotency and Status Codes
+- **Method Semantics & Idempotency:**
+  | HTTP Method | Operation | Safe | Idempotent | Expected Success Status |
+  | :--- | :--- | :--- | :--- | :--- |
+  | **`GET`** | Retrieve resource(s) | Yes | Yes | `200 OK` |
+  | **`POST`** | Create resource / non-idempotent action | No | No | `201 Created` (`Location` header) or `202 Accepted` |
+  | **`PUT`** | Full replacement of an existing resource | No | Yes | `200 OK` or `204 No Content` |
+  | **`PATCH`** | Partial update (JSON Patch / Merge Patch) | No | Conditional | `200 OK` |
+  | **`DELETE`** | Remove resource | No | Yes | `204 No Content` |
+  - *Idempotency Key Pattern:* For non-idempotent `POST` endpoints (e.g., payment creation), accept an `Idempotency-Key` header so client retries safely return the original response without duplicate execution.
+- **Client & Server Error Status Codes:**
+  - `400 Bad Request`: Malformed JSON syntax, invalid parameter type, or domain validation failure.
+  - `401 Unauthorized`: Missing, expired, or invalid authentication credentials/JWT.
+  - `403 Forbidden`: Authenticated identity lacks required role/scope/ownership permissions.
+  - `404 Not Found`: Target resource does not exist.
+  - `409 Conflict`: Optimistic locking version mismatch (`@Version`) or duplicate unique key.
+  - `422 Unprocessable Entity`: Syntactically valid payload violating business rules.
+  - `429 Too Many Requests`: Rate-limit quota exceeded (include `Retry-After` header).
+  - `500 Internal Server Error` / `503 Service Unavailable`: Unhandled server fault or temporary downstream dependency outage.
+
+### Backward-Compatible Evolution and Versioning Strategies
+- **Non-Breaking (Additive) Changes — No Version Bump Required:**
+  - Adding optional fields to JSON response payloads (clients must ignore unknown properties).
+  - Adding new optional query parameters or new endpoints.
+  - Loosening validation constraints on existing request fields.
+- **Breaking Changes — Require New Major Version:**
+  - Removing or renaming existing request/response fields, changing field data types, tightening validation rules, or altering error codes/semantics.
+- **Versioning Approaches:**
+  1. **URI Path Versioning (`/api/v1/orders` → `/api/v2/orders`):** Most explicit, easily routable at API gateways/CDNs, and unambiguous in OpenAPI specs and access logs.
+  2. **Custom Header Versioning (`X-API-Version: 2`):** Preserves clean resource URIs while routing via Spring MVC `@GetMapping(headers = "X-API-Version=2")` or gateway rules.
+  3. **Media Type / Content Negotiation (`Accept: application/vnd.company.order.v2+json`):** Adheres strictly to REST hypermedia/representation principles without altering URIs.
+- **Implementation & Deprecation Hygiene:** Keep version differences isolated in controller DTOs and mappers while sharing the underlying service layer; announce deprecation via `Deprecation` and `Sunset` HTTP response headers before retiring old versions.
+
+### Standardized Error Contract RFC 7807 ProblemDetail
+- **Uniform Error Payload:** Return a consistent JSON schema across all controllers and security filters using Spring Framework's native `ProblemDetail` (RFC 7807 / RFC 9457):
+  ```json
+  {
+    "type": "[https://api.example.com/errors/validation-failed](https://api.example.com/errors/validation-failed)",
+    "title": "Request Validation Failed",
+    "status": 400,
+    "detail": "One or more request fields failed validation.",
+    "instance": "/api/v1/orders",
+    "timestamp": "2026-11-27T08:00:00Z",
+    "traceId": "4bf92f3577b34da6",
+    "fieldErrors": [
+      { "field": "quantity", "message": "must be greater than 0" }
+    ]
+  }
+  ```
+- **Centralized Enforcement in Spring Boot:**
+  - Handle controller and validation exceptions (`MethodArgumentNotValidException`, `HttpMessageNotReadableException`, custom domain exceptions) in a single `@RestControllerAdvice` class.
+  - Handle filter-level Spring Security exceptions (`401`/`403`) via custom `AuthenticationEntryPoint` and `AccessDeniedHandler` so security failures return the exact same `ProblemDetail` structure.
+  - Never expose stack traces, SQL errors, or internal class names; attach a `traceId` / correlation ID for log lookup.

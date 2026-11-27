@@ -90,6 +90,21 @@
 
 ---
 
+### Q. How would you coordinate order, payment, and inventory changes across separate databases using a Saga? What happens when a later step fails, and when would you choose this over XA/2PC?
+
+**Structured Answer Roadmap (Follow in Sequence):**
+1. **Contrast With XA/2PC First:** Refer to [Why XA Two-Phase Commit Fails at Scale](<./Notes - Spring - 4. Data JPA.md#why-xa-two-phase-commit-fails-at-scale>) — explain why holding locks across separate Order, Payment, and Inventory databases degrades throughput and availability.
+2. **Walk Through the Forward Saga Flow (Order → Payment → Inventory):** Refer to [Saga Pattern Architecture and Coordination Models](<./Notes - Spring - 4. Data JPA.md#saga-pattern-architecture-and-coordination-models>) — choose **Orchestration** (or **Choreography**) and trace the exact execution sequence using local `@Transactional` boundaries + the **Transactional Outbox Pattern**:
+   - **Step 1 (`Order Service`):** Locally persists `Order` with status `PENDING` and writes an `OrderCreated` outbox event.
+   - **Step 2 (`Payment Service`):** Consumes the event/command, locally authorizes/captures payment (`PAYMENT_COMPLETED`), and emits `PaymentProcessed`.
+   - **Step 3 (`Inventory Service`):** Consumes `PaymentProcessed`, reserves stock (`INVENTORY_RESERVED`), and emits `InventoryReserved` → `Order Service` transitions order status to `CONFIRMED`.
+3. **Trace Failure & Reverse Compensation:** Refer to [Failure Handling and Compensating Transactions](<./Notes - Spring - 4. Data JPA.md#failure-handling-and-compensating-transactions>) — explain what happens when Step 3 (`Inventory Service`) fails due to out-of-stock:
+   - `Inventory Service` emits `InventoryReservationFailed`.
+   - **Reverse Compensation:** `Payment Service` executes an idempotent **refund/void** compensating transaction (`PaymentRefunded`), followed by `Order Service` marking the order `CANCELLED` (while `PENDING` status prevented premature fulfillment during the intermediate window).
+4. **Conclude With Trade-Off Selection Criteria:** Refer to [When to Choose Saga vs XA Two-Phase Commit](<./Notes - Spring - 4. Data JPA.md#when-to-choose-saga-vs-xa-two-phase-commit>) — state when Saga wins (microservices, high throughput, polyglot/external APIs) vs. when XA/2PC is justified (low-volume, tightly coupled XA-compliant DBs requiring strict immediate isolation).
+
+---
+
 ### How do you handle retry if a batch insert operation fails in between?
 
 > **Direct Answer:**
@@ -146,3 +161,16 @@
 > - **`@EmbeddedId` vs. `@IdClass`:** `@EmbeddedId` adheres to clean object-oriented design by treating composite keys as a single cohesive object, though it makes JPQL paths slightly longer (e.g., `e.id.departmentId`). `@IdClass` keeps key fields flat on the entity root for simpler JPQL, but clutters entity attributes.
 >
 > **Reference Concept:** `Composite Primary Keys (@EmbeddedId vs. @IdClass)`
+
+---
+
+### Q. How does lazy loading work in Hibernate? Given one query for orders followed by one query per order for its items, how would you detect the N+1 problem, choose a fetch strategy, and verify the fix?
+
+**Structured Answer Roadmap (Follow in Sequence):**
+1. **Explain Proxy & Collection Interception:** Refer to [How Lazy Loading Works Internally](<./Notes - Spring - 4. Data JPA.md#how-lazy-loading-works-internally>) — explain how Hibernate wraps `Order.items` in a `PersistentCollection` proxy during the initial `SELECT * FROM orders` query, deferring SQL until iteration, which triggers $N$ individual `SELECT * FROM order_items WHERE order_id = ?` queries.
+2. **Walk Through Detection Mechanisms:** Refer to [Detecting the N+1 Query Problem](<./Notes - Spring - 4. Data JPA.md#detecting-the-n1-query-problem>) — cover SQL logging with bind parameters, Hibernate Statistics, automated query-count assertions in integration tests (Datasource-Proxy), and APM/database profiling.
+3. **Compare and Select the Fetch Strategy:** Refer to [Choosing the Right Fetch Strategy](<./Notes - Spring - 4. Data JPA.md#choosing-the-right-fetch-strategy>) — frame the choice based on the access pattern:
+   - Use **`JOIN FETCH`** or **`@EntityGraph(attributePaths = "items")`** when fetching unpaginated orders with their items in one round-trip.
+   - Use **`@BatchSize`** (e.g., `size = 25`) when the orders endpoint is paginated (`Page<Order>`) to avoid `JOIN FETCH` in-memory pagination (`HHH90003004`).
+   - Use **DTO / Interface Projections** if the endpoint is strictly read-only and does not need managed entity state.
+4. **Describe Verification Steps:** Refer to [Verifying the Fix](<./Notes - Spring - 4. Data JPA.md#verifying-the-fix>) — confirm the SQL output collapses from $N+1$ statements to 1 `JOIN` (or $\lceil N/25 \rceil + 1$ batched queries), verify `EXPLAIN ANALYZE` uses the `order_id` foreign-key index, and assert the exact query count in tests.

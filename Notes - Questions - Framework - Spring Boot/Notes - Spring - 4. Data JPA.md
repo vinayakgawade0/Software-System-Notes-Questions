@@ -277,6 +277,47 @@
   - Chains a series of fast local transactions across services.
   - If a step fails midway (e.g., inventory deduction fails after payment), a **Compensating Transaction** is triggered (e.g., refund payment) to revert earlier state.
 
+## Distributed Transactions and the Saga Pattern
+
+### Why XA Two-Phase Commit Fails at Scale
+- **Mechanism of XA / 2PC:** A global transaction coordinator executes a **Prepare Phase** (each participant acquires database row/table locks, writes undo/redo logs, and votes ready) followed by a **Commit Phase** (all participants commit or roll back synchronously).
+- **Limitations in Microservices:**
+  - **Synchronous Lock Contention:** Database locks are held across network calls for the entire duration of all participating services, severely reducing throughput.
+  - **Availability Coupling:** If any single participant or the coordinator slows down or crashes mid-protocol, all participating services block or remain in-doubt.
+  - **Heterogeneous Storage:** Modern systems span polyglot stores (PostgreSQL, MongoDB, Kafka, external payment gateways) that do not support a shared XA transaction protocol.
+
+### Saga Pattern Architecture and Coordination Models
+A **Saga** replaces a single global ACID transaction with a sequence of **local ACID transactions**—one per service/database—coordinated via asynchronous events or commands to achieve **eventual consistency**.
+
+1. **Choreography-Based Saga (Event-Driven):**
+   - Each service executes its local `@Transactional` DB update and publishes a domain event; downstream services subscribe and react without a central controller.
+   - *Best for:* Simple workflows (2–4 steps) where minimal service coupling is desired.
+   - *Trade-off:* End-to-end flow becomes difficult to trace or modify as step count grows.
+2. **Orchestration-Based Saga (Central Coordinator):**
+   - A dedicated **Saga Orchestrator** persists workflow state, sends explicit commands to each participant service, and listens for reply events to trigger the next step or initiate rollback.
+   - *Best for:* Complex multi-step workflows with conditional logic, timeouts, and centralized observability.
+   - *Trade-off:* Requires managing orchestrator state persistence while keeping business rules inside domain services.
+3. **Reliable Event Publishing (Transactional Outbox Pattern):**
+   - To prevent dual-write failures (DB commits locally, but broker publish fails), the service writes both the entity state change and an `OutboxEvent` row inside the **same local `@Transactional` boundary**, and an outbox poller or CDC connector (Debezium) reliably publishes the event to the message broker.
+
+### Failure Handling and Compensating Transactions
+- **Semantic Rollback:** Because earlier local transactions have already committed, Sagas cannot perform a database-level rollback. Instead, every forward step $T_i$ with side effects must define an idempotent **Compensating Transaction** $C_i$ that semantically undoes $T_i$ in reverse order ($C_{k-1} \dots C_1$).
+- **Pivot, Compensatable, and Retriable Transactions:**
+  - **Compensatable Transactions:** Steps before the point of no return that can be undone via a compensating action.
+  - **Pivot Transaction:** The go/no-go decision step; once it commits, the Saga runs forward to completion.
+  - **Retriable Transactions:** Steps after the pivot guaranteed to succeed eventually via idempotent retries.
+- **Idempotency & Isolation Anomalies:**
+  - Every forward and compensating consumer must deduplicate messages using a unique `sagaId` / `eventId` table or constraint.
+  - Because intermediate states are visible before the Saga finishes (lack of global isolation), apply **semantic countermeasures** such as intermediate statuses (`PENDING`, `PAYMENT_RESERVED`, `CANCELLED`) so concurrent reads do not treat uncommitted workflows as finalized.
+
+### When to Choose Saga vs XA Two-Phase Commit
+| Criteria | Choose Saga Pattern | Choose XA / Two-Phase Commit (2PC) |
+| :--- | :--- | :--- |
+| **Architecture** | Independent microservices with database-per-service | Legacy/monolithic systems or tightly coupled internal modules |
+| **Throughput & Latency** | High-throughput, non-blocking, internet-facing APIs | Low-concurrency internal back-office operations |
+| **Storage Heterogeneity** | Polyglot persistence (SQL + NoSQL + external APIs) | Homogeneous XA-compliant relational databases on a low-latency LAN |
+| **Consistency Requirement** | Eventual consistency with semantic compensation is acceptable | Strict immediate ACID isolation across resources is mandatory |
+
 ---
 
 ## Batch Processing & Failure Retry Strategies
@@ -505,3 +546,29 @@
 - **`@IdClass` (Flattened Mapping):**
   - *Pros:* Key fields remain directly on the entity root, resulting in flatter JPQL queries (e.g., `SELECT e FROM Employee e WHERE e.departmentId = :deptId`).
   - *Cons:* Clutters the entity class by defining composite key fields directly alongside domain attributes.
+
+## Hibernate Lazy Loading and N+1 Query Optimization
+
+### How Lazy Loading Works Internally
+- **Proxy Interception:** When an entity has a `@OneToMany` or `@ManyToMany` association (default `FetchType.LAZY`), or a `@ManyToOne` / `@OneToOne` explicitly configured with `fetch = FetchType.LAZY`, Hibernate does not join or query the child table during the initial `SELECT`. Instead, it injects a dynamic bytecode proxy (for single-ended associations) or a `PersistentCollection` wrapper (`PersistentBag`, `PersistentSet`) into the parent entity.
+- **On-Demand Initialization:** Accessing the identifier (`order.getCustomer().getId()`) does not trigger SQL if the foreign key is already held in the proxy. Accessing any non-ID property or iterating over a lazy collection (`order.getItems().size()`) triggers `LazyInitializationException` if the Hibernate `Session` (Persistence Context) is closed, or executes a separate `SELECT` statement if the session is still open.
+- **Root Cause of the N+1 Problem:** Fetching $N$ parent records executes **1 query** (`SELECT * FROM orders ...`). Iterating through those $N$ parents and accessing a lazy association on each triggers **$N$ additional queries** (`SELECT * FROM order_items WHERE order_id = ?`), resulting in $N + 1$ database round-trips.
+
+### Detecting the N+1 Query Problem
+1. **SQL Logging & Formatting:** Enable `spring.jpa.show-sql=true` with `spring.jpa.properties.hibernate.format_sql=true` (or log `org.hibernate.SQL` at `DEBUG` and `org.hibernate.orm.jdbc.bind` at `TRACE`) during local and integration runs to spot repeated identical `SELECT` statements with differing bind parameters.
+2. **Hibernate Statistics:** Enable `spring.jpa.properties.hibernate.generate_statistics=true` to inspect `SessionMetrics` (total JDBC statements prepared/executed per transaction).
+3. **Query-Count Assertions in Tests:** Use **Datasource-Proxy** or **QuickPerf** in Spring Boot integration tests (`@DataJpaTest` / `@SpringBootTest`) to assert exact SQL query counts (`assertSelectCount(1)`) and fail builds automatically if an N+1 regression is introduced.
+4. **APM & Database Profiling:** Inspect distributed traces (OpenTelemetry / Micrometer Tracing) or PostgreSQL `pg_stat_statements` to identify high call-count, low-latency queries dominating total request time.
+
+### Choosing the Right Fetch Strategy
+| Strategy | Mechanism | Best Use Case | Trade-Offs / Pitfalls |
+| :--- | :--- | :--- | :--- |
+| **`JOIN FETCH` (JPQL)** | Explicitly joins and hydrates the association in a single SQL `SELECT`. | Query-specific needs where parent + single collection are always required together. | **Cartesian product** if joining multiple bags (`MultipleBagFetchException`); **in-memory pagination** (`HHH90003004`) if combined with `Pageable`. |
+| **`@EntityGraph`** | Declarative fetch plan (`attributePaths = {"items"}`) applied on Spring Data repository methods. | Reusing standard derived/JPQL queries with different fetch profiles per use case without rewriting JPQL. | Uses `LEFT OUTER JOIN` under the hood; shares the same multi-bag and pagination caveats as `JOIN FETCH`. |
+| **`@BatchSize(size = N)`** | Configures Hibernate to load uninitialized proxies/collections in batches using `WHERE order_id IN (?, ?, ...)` (`hibernate.default_batch_fetch_size`). | Safe default across the domain model, or when paginating parent entities (`Page<Order>`) alongside child collections. | Executes $\lceil N / \text{batchSize} \rceil + 1$ queries instead of 1, though vastly faster than $N + 1$. |
+| **`@Fetch(FetchMode.SUBSELECT)`** | Executes 1 query for parents and 1 subselect query (`WHERE order_id IN (SELECT id FROM orders ...)`) for all child collections. | Loading large collections across an entire result set where `IN` clause parameter limits could be exceeded. | Hibernate-specific annotation; re-runs the parent `SELECT` inside the `IN` subquery. |
+| **DTO / Interface Projections** | Selects only the exact columns needed into a Java `record` or Spring Data interface projection. | Read-only REST endpoints, dashboards, and reporting views. | Bypasses dirty checking and managed entity overhead completely; cannot be used for entity mutations. |
+
+### Verifying the Fix
+- **Compare SQL Trace Output:** Confirm that the repeated per-parent `SELECT` statements collapse into a single `LEFT JOIN` query (`JOIN FETCH` / `@EntityGraph`) or a bounded `IN (...)` batch query (`@BatchSize`).
+- **Verify Query Count & Execution Plan:** Re-run the integration test with query-count assertions and execute `EXPLAIN ANALYZE` on the generated SQL to ensure proper index usage on foreign keys and no unintended `HHH90003004` in-memory pagination warnings in logs.

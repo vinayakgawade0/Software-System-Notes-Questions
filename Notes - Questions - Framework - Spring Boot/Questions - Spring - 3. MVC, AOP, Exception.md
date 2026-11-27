@@ -165,3 +165,13 @@
 > - Using `@ControllerAdvice` for an API error will cause Spring to attempt view resolution on the returned error object or string, leading to a `Circular view path` error or 500 internal server error unless `@ResponseBody` is manually appended to every method.
 >
 > **Reference Concept:** `@ControllerAdvice vs. @RestControllerAdvice Mechanics`
+
+---
+
+### Q. How would you design and evolve a REST API without breaking existing clients? Explain resource naming, status codes, versioning, and a consistent error contract.
+
+**Structured Answer Roadmap (Follow in Sequence):**
+1. **Establish Resource Naming & URI Structure:** Refer to [Resource Naming and URI Modeling](<./Notes - Spring - 3. MVC, AOP, Exception.md#resource-naming-and-uri-modeling>) — emphasize plural domain nouns, shallow hierarchical paths, and query parameters for filtering/sorting, and reuse the existing [Pagination Question](#how-do-you-implement-pagination-and-sorting-in-spring-boot-rest-apis) for `Pageable` vs. cursor pagination details.
+2. **Map HTTP Methods, Idempotency & Status Codes:** Refer to [HTTP Methods Idempotency and Status Codes](<./Notes - Spring - 3. MVC, AOP, Exception.md#http-methods-idempotency-and-status-codes>) — align `GET`/`POST`/`PUT`/`PATCH`/`DELETE` with idempotency guarantees (`Idempotency-Key` on `POST`) and accurate `2xx`/`4xx`/`5xx` status codes.
+3. **Explain Non-Breaking Evolution & Versioning Strategies:** Refer to [Backward-Compatible Evolution and Versioning Strategies](<./Notes - Spring - 3. MVC, AOP, Exception.md#backward-compatible-evolution-and-versioning-strategies>) — distinguish additive non-breaking changes from breaking changes, compare URI (`/v1/`), Header, and Content Negotiation versioning, and explain isolating version DTOs over a shared service layer with `Deprecation`/`Sunset` headers.
+4. **Define the Standardized Error Contract:** Refer to [Standardized Error Contract RFC 7807 ProblemDetail](<./Notes - Spring - 3. MVC, AOP, Exception.md#standardized-error-contract-rfc-7807-problemdetail>) — explain returning a uniform RFC 7807 `ProblemDetail` payload (`status`, `title`, `detail`, `instance`, `traceId`, `fieldErrors`) via `@RestControllerAdvice` plus Spring Security `AuthenticationEntryPoint`/`AccessDeniedHandler` without leaking stack traces.

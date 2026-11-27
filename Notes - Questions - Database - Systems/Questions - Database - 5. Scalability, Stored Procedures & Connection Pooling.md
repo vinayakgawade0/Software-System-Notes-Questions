@@ -24,6 +24,15 @@
 
 ---
 
+### Q. What is the difference between table partitioning and sharding? Which scaling problem does each address, and when would you choose one over the other?
+
+**Structured Answer Roadmap (Follow in Sequence):**
+1. **Define Table Partitioning & Its Scaling Focus:** Refer to [Table Partitioning Single-Instance Scaling](<./Notes - Database - 5. Scalability, Stored Procedures & Connection Pooling.md#table-partitioning-single-instance-scaling>) — explain how partitioning divides a large table into physical segments (Range, List, Hash) on **one DB instance**, solving index bloat, keeping hot partitions in RAM via partition pruning, and enabling instant partition drops for archival.
+2. **Define Database Sharding & Its Scaling Focus:** Refer to [Database Sharding Horizontal Multi-Node Scaling](<./Notes - Database - 5. Scalability, Stored Procedures & Connection Pooling.md#database-sharding-horizontal-multi-node-scaling>) — explain how sharding distributes rows horizontally across **multiple independent DB servers** via a shard key (`tenant_id` / `customer_id`), solving single-node write IOPS ceilings, storage limits, and noisy-neighbor isolation, while introducing cross-shard join and resharding complexity.
+3. **Compare Side-by-Side & State the Selection Rule:** Refer to [Architectural Comparison and Selection Criteria](<./Notes - Database - 5. Scalability, Stored Procedures & Connection Pooling.md#architectural-comparison-and-selection-criteria>) — summarize topology, ACID scope, and operational overhead, concluding with the progression rule (tune/replicas/cache first → partition for single-node table size/archival → shard only when write throughput or storage outgrows a single primary node).
+
+---
+
 ## Enterprise Connection Pooling in Java and Spring Boot
 
 ### What is Connection Pooling in Java / Spring Boot, why is it necessary, and how is it configured?
