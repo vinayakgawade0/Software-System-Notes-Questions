@@ -97,3 +97,21 @@
 > - **The Mutation Trap:** Because `@PostAuthorize` executes after the method body, write/delete database operations have already been executed and committed before the security check runs. Strictly restrict `@PostAuthorize` to read-only (`GET`) queries.
 >
 > **Reference Concept:** `@PreAuthorize vs. @PostAuthorize Mechanics & The Mutation Trap`
+
+---
+
+### What is AuthenticationManager in Spring Security, and how does it authenticate a username/password request?
+
+> **Direct Answer:**
+> - **Interface & Default Delegation:** `AuthenticationManager` is the core strategy interface (`authenticate(Authentication)`) responsible for verifying credentials and returning a populated `Authentication` (`isAuthenticated() == true`) or throwing an `AuthenticationException`. Its default implementation, `ProviderManager`, iterates through a list of `AuthenticationProvider` beans, using `supports(Class<?>)` to find a compatible provider before delegating verification to `provider.authenticate(...)`.
+> - **Username/Password Login Flow:**
+>   1. **Caller (`UsernamePasswordAuthenticationFilter` or `/login` controller):** Wraps incoming credentials into an unauthenticated `UsernamePasswordAuthenticationToken` (`isAuthenticated() == false`) and calls `authenticationManager.authenticate(...)`.
+>   2. **`ProviderManager` & `DaoAuthenticationProvider`:** `ProviderManager` matches `DaoAuthenticationProvider` via `supports(...)` and delegates the token.
+>   3. **`UserDetailsService` & `PasswordEncoder`:** `DaoAuthenticationProvider` loads the stored user record via `UserDetailsService.loadUserByUsername(...)`, checks account flags (locked/enabled/expired), and verifies the raw password against the stored hash using `PasswordEncoder.matches(...)`.
+>   4. **Post-Authentication Handoff:** On success, `DaoAuthenticationProvider` returns an authenticated `UsernamePasswordAuthenticationToken` with `GrantedAuthority` roles (and `ProviderManager` erases the raw password); on failure, it throws an `AuthenticationException` (e.g., `BadCredentialsException`).
+>
+> **Key Nuance / Trade-off:**
+> - **Boundary of Responsibility:** `AuthenticationManager` only verifies identity—it does **not** populate `SecurityContextHolder`, create HTTP sessions, or issue tokens. The **caller** (the security filter for stateful sessions, or your login controller/service for stateless JWT issuance) decides what to do with the authenticated `Authentication` object next.
+> - **`supports(...)` vs. Result:** Returning `true` from `supports(...)` only indicates token type compatibility; a provider can still return `null` from `authenticate(...)` to abstain and let `ProviderManager` try the next provider.
+>
+> **Reference Concept:** [AuthenticationManager, ProviderManager & AuthenticationProvider](<./Notes - Spring - 5. Spring Security.md#authenticationmanager-providermanager--authenticationprovider>)

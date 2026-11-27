@@ -317,6 +317,23 @@
 
 ---
 
+### What are Spring Boot Actuator endpoints, and how would you expose and secure them in production?
+
+> **Direct Answer:**
+> - **Operational Purpose:** `spring-boot-starter-actuator` provides built-in production endpoints under `/actuator` for health checks (`/actuator/health`), build/Git metadata (`/actuator/info`), and Micrometer telemetry (`/actuator/metrics` and `/actuator/prometheus`, the latter requiring `micrometer-registry-prometheus`).
+> - **Production Monitoring Setup:**
+>   1. **Explicit Allow-List:** Keep Spring Boot 3's safe default (`health` only) and explicitly allow-list only `health,info,prometheus` via `management.endpoints.web.exposure.include`—never use `*` in production.
+>   2. **Health Probes:** Permit unauthenticated access to `/actuator/health` (and `/liveness` / `/readiness` probes) for load balancers and Kubernetes while keeping `management.endpoint.health.show-details=when_authorized` so internal dependency details are not leaked publicly.
+>   3. **Authorized Metrics Scraping:** Protect `/actuator/prometheus` and `/actuator/info` in `SecurityFilterChain` using `EndpointRequest` matchers requiring a dedicated monitoring role/token (or bind management endpoints to an internal `management.server.port` behind a firewall).
+>   4. **Keep Diagnostic Endpoints Restricted:** Leave `heapdump`, `threaddump`, `env`, `configprops`, `beans`, `mappings`, `loggers`, and `shutdown` unexposed over HTTP to prevent secret exposure, reconnaissance, and JVM pause DoS risks.
+>
+> **Key Nuance / Trade-off:**
+> - **Three Separate Gates:** An endpoint must pass **availability/access** (bean enabled in context; `management.endpoint.<id>.access` in Boot 3.4+ vs. `enabled` in Boot 2.x–3.3), **HTTP exposure** (`management.endpoints.web.exposure.include`), and **Spring Security authorization**. Exposing an endpoint without configuring Spring Security locks it down to authenticated users (or rejects it), whereas exposing `*` with `permitAll()` creates a critical security leak.
+>
+> **Reference Concept:** [Spring Boot Actuator: Endpoints, Exposure & Security](<./Notes - Spring - 2. Auto Config, Components.md#spring-boot-actuator-endpoints-exposure--security>)
+
+---
+
 ### Your application needs to fetch weather data from an external API (example: OpenWeather). How do you make HTTP requests?
 
 > **Direct Answer:**

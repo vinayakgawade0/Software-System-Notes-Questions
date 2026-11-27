@@ -156,3 +156,105 @@
 - **The Memory Trap:** Calling `MultipartFile.getBytes()` directly loads the entire payload into JVM heap memory, causing `OutOfMemoryError` on large files.
 - **Application Solution:** Configure Tomcat limits in `application.properties` (`spring.servlet.multipart.max-file-size=2GB`) and stream the `InputStream` directly to disk or cloud storage.
 - **Architecture Solution (Pre-Signed URLs):** Proxying massive files through Spring microservices wastes CPU and network bandwidth. The API authenticates the user, generates a secure, temporary AWS S3 Pre-Signed URL, and returns it to the client. The client uploads the file directly to cloud storage, bypassing the backend JVM entirely.
+
+### Spring Boot Actuator: Endpoints, Exposure & Security
+
+#### Why Spring Boot Actuator Is Used & Core Production Endpoints
+- **Purpose:** `org.springframework.boot:spring-boot-starter-actuator` adds production-ready operational endpoints (mapped under `/actuator` by default) for health probes, telemetry scraping, build metadata, and runtime diagnostics without writing custom management controllers.
+- **Core Operational Endpoints:**
+  | Endpoint Path | Primary Role in Production | Default HTTP Exposure (Spring Boot 3.x) |
+  | :--- | :--- | :--- |
+  | **`/actuator/health`** | Aggregates `HealthIndicator` checks (DB, Redis, Kafka, disk space) into `UP` / `DOWN` statuses and exposes Kubernetes probes (`/actuator/health/liveness` and `/actuator/health/readiness`). | **Exposed** (`health` is the sole web-exposed endpoint by default) |
+  | **`/actuator/info`** | Publishes build metadata (`META-INF/build-info.properties`), Git commit details (`git.properties`), and custom `InfoContributor` beans. | **Not exposed** by default (must be explicitly allow-listed) |
+  | **`/actuator/metrics`** | Exposes dimensional Micrometer metrics (JVM heap/GC, HTTP server latency, HikariCP pool usage, system CPU) in JSON format. | **Not exposed** by default |
+  | **`/actuator/prometheus`** | Formats Micrometer metrics into Prometheus/OpenMetrics text exposition format for time-series scraping. | **Not exposed** by default |
+- **Extra Dependency for `/actuator/prometheus`:**
+  - `spring-boot-starter-actuator` includes `micrometer-core`, which powers `/actuator/metrics`, **but `/actuator/prometheus` is not auto-configured until `io.micrometer:micrometer-registry-prometheus` is added to the classpath**.
+
+#### Three Distinct Control Layers: Availability/Access vs. HTTP Exposure vs. Authorization
+An Actuator endpoint only serves HTTP traffic when **all three** layers permit it:
+1. **Endpoint Availability / Access (Bean Creation & Operation Mode):**
+   - Controls whether the endpoint bean is instantiated in the `ApplicationContext` and whether write/mutating operations (`@WriteOperation` / `@DeleteOperation`) are permitted.
+   - **Version Difference (Spring Boot 2.x–3.3 vs. Spring Boot 3.4+):**
+     - **Spring Boot 2.x – 3.3:** Controlled via boolean properties `management.endpoints.enabled-by-default` (default `true`) and `management.endpoint.<id>.enabled` (`true` for all built-in endpoints except `shutdown`, which defaults to `false`).
+     - **Spring Boot 3.4+:** `enabled` and `enabled-by-default` are deprecated in favor of three-tier access control: `management.endpoints.access.default` (`unrestricted` by default), `management.endpoint.<id>.access` (`none`, `read-only`, or `unrestricted`), and `management.endpoints.access.max-permitted`. Both `shutdown` and `heapdump` default to `none` in Boot 3.4+.
+2. **Web / JMX Exposure (Transport Mapping):**
+   - Controls whether an available endpoint is mapped to an HTTP route under `management.endpoints.web.base-path` (default `/actuator`) or registered as a JMX MBean.
+   - **Version Difference:** Since **Spring Boot 2.6+ and throughout Spring Boot 3.x**, `management.endpoints.web.exposure.include` defaults strictly to `health` (earlier Boot 2.x releases defaulted to `health,info`). JMX exposure defaults to `*`.
+3. **Request Authorization (Spring Security & Network Isolation):**
+   - Once exposed over HTTP, endpoints behave like normal MVC/WebFlux routes and are governed by your `SecurityFilterChain` (using `EndpointRequest.to(...)` or `requestMatchers("/actuator/**")`) as well as optional port/network isolation (`management.server.port`).
+   - **Data Sanitization Default (Spring Boot 3.x):** `management.endpoint.health.show-details` defaults to `never` (returning only `{"status":"UP"}`), and `management.endpoint.env.show-values` / `configprops.show-values` default to `never` (masking all property values unless explicitly configured to `when-authorized` or `always`).
+
+#### Minimal Production Configuration (`application.yml` & `SecurityFilterChain`)
+- **Explicit Allow-List in `application.yml` (Never `include: "*"` in Production):**
+  ```yaml
+  management:
+    endpoints:
+      web:
+        exposure:
+          # Explicit allow-list: expose only probes, metadata, and Prometheus scrape endpoint
+          include: health,info,prometheus
+    endpoint:
+      health:
+        show-details: when_authorized
+        roles: ACTUATOR_ADMIN
+        probes:
+          enabled: true
+    info:
+      env:
+        enabled: true
+  ```
+- **Spring Security Rules (`EndpointRequest` Matchers):**
+  ```java
+  @Bean
+  @Order(1)
+  public SecurityFilterChain actuatorSecurityFilterChain(HttpSecurity http) throws Exception {
+      http
+          .securityMatcher(EndpointRequest.toAnyEndpoint())
+          .authorizeHttpRequests(auth -> auth
+              // Allow Kubernetes / load-balancer health probes without credentials
+              .requestMatchers(EndpointRequest.to(HealthEndpoint.class)).permitAll()
+              // Restrict metrics/info scraping to dedicated monitoring role/token
+              .requestMatchers(EndpointRequest.to("prometheus", "info")).hasRole("ACTUATOR_MONITOR")
+              .anyRequest().denyAll()
+          )
+          .httpBasic(Customizer.withDefaults())
+          .csrf(csrf -> csrf.disable());
+
+      return http.build();
+  }
+  ```
+
+#### Endpoints to Keep Restricted in Production
+- **Never expose publicly over HTTP** (keep excluded from `management.endpoints.web.exposure.include` or locked behind an internal management port/VPN + strong role authorization):
+  - **`heapdump` & `threaddump`:** `heapdump` downloads full JVM memory containing passwords, JWT signing keys, and PII; both trigger stop-the-world JVM pauses that can cause a self-inflicted denial of service.
+  - **`env` & `configprops`:** Reveal environment variables, active profiles, datasource URLs, and configuration keys.
+  - **`beans`, `conditions`, & `mappings`:** Expose internal class names, bean wiring, and every registered API route (accelerating attacker reconnaissance).
+  - **`loggers` & `sessions`:** Allow mutating runtime log levels (`POST /actuator/loggers/...`) or invalidating active user sessions.
+  - **`shutdown`:** Triggers graceful JVM termination via `POST /actuator/shutdown` (disabled by default; keep disabled in production).
+
+#### Verifying Endpoint Exposure & Security Behavior
+Run targeted HTTP checks against the running service to confirm least-privilege behavior:
+```bash
+# 1. Intended public health endpoint -> 200 OK with minimal status payload (details hidden)
+curl -i http://localhost:8080/actuator/health
+# Expected: HTTP/1.1 200 OK -> {"status":"UP"}
+
+# 2. Exposed but protected Prometheus endpoint without credentials -> 401 Unauthorized
+curl -i http://localhost:8080/actuator/prometheus
+# Expected: HTTP/1.1 401 Unauthorized
+
+# 3. Exposed Prometheus endpoint with monitoring role credentials -> 200 OK (OpenMetrics text)
+curl -i -u prometheus:secret http://localhost:8080/actuator/prometheus
+# Expected: HTTP/1.1 200 OK -> # HELP jvm_memory_used_bytes ...
+
+# 4. Non-exposed sensitive endpoint (even with valid credentials) -> 404 Not Found
+curl -i -u prometheus:secret http://localhost:8080/actuator/env
+# Expected: HTTP/1.1 404 Not Found
+```
+
+#### Official References
+- [Spring Boot Reference — Production-Ready Features (Actuator)](https://docs.spring.io/spring-boot/reference/actuator/index.html)
+- [Spring Boot Reference — Actuator Endpoints, Access & Web Exposure](https://docs.spring.io/spring-boot/reference/actuator/endpoints.html)
+- [Spring Boot Reference — Securing Actuator Endpoints](https://docs.spring.io/spring-boot/reference/actuator/endpoints.html#actuator.endpoints.security)
+- [Spring Boot Reference — Prometheus Metrics Integration](https://docs.spring.io/spring-boot/reference/actuator/metrics.html#actuator.metrics.export.prometheus)

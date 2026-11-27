@@ -59,6 +59,79 @@
 
 ---
 
+### AuthenticationManager, ProviderManager & AuthenticationProvider
+
+#### `AuthenticationManager` Interface Contract vs. `ProviderManager` Behavior
+- **`AuthenticationManager` Contract:**
+  - [`AuthenticationManager`](https://docs.spring.io/spring-security/reference/api/java/org/springframework/security/authentication/AuthenticationManager.html) is a `@FunctionalInterface` defining a single method: `Authentication authenticate(Authentication authentication) throws AuthenticationException`.
+  - Its contract is strictly to evaluate an unauthenticated input `Authentication` request (`isAuthenticated() == false`) and either return a fully populated `Authentication` object (`isAuthenticated() == true`, including `principal` and `GrantedAuthority` list) or throw an `AuthenticationException`.
+- **`ProviderManager` Implementation Behavior:**
+  - [`ProviderManager`](https://docs.spring.io/spring-security/reference/api/java/org/springframework/security/authentication/ProviderManager.html) is Spring Security's standard implementation of `AuthenticationManager`. It maintains an ordered `List<AuthenticationProvider>` and an optional parent `AuthenticationManager`:
+    1. Iterates sequentially through its configured `AuthenticationProvider` beans.
+    2. If a supporting provider throws an `AuthenticationException`, `ProviderManager` records it (`lastException`) and continues trying remaining supporting providers; if a later provider succeeds, its result overrides the earlier exception.
+    3. If all providers return `null` (abstain) and a parent `AuthenticationManager` exists, delegates to `parent.authenticate(authentication)`.
+    4. If no provider supports the token (or all abstain with no parent), throws `ProviderNotFoundException` (a subclass of `AuthenticationException`).
+    5. Publishes success/failure events via `AuthenticationEventPublisher` and wipes raw secrets from the returned `Authentication` (`CredentialsContainer.eraseCredentials()`) by default (`eraseCredentialsAfterAuthentication = true`).
+
+#### `AuthenticationProvider.supports(...)` vs. Authentication Decision
+- **`supports(Class<?> authentication)` (Type Pre-Filter):**
+  - [`AuthenticationProvider.supports(...)`](https://docs.spring.io/spring-security/reference/api/java/org/springframework/security/authentication/AuthenticationProvider.html) only answers whether the provider can inspect a given `Authentication` class (e.g., `UsernamePasswordAuthenticationToken.class.isAssignableFrom(authentication)`). Returning `true` does **not** authenticate the user—it simply opts the provider into evaluation.
+- **`authenticate(Authentication authentication)` (Verification Decision):**
+  - Performs actual credential/token verification and produces one of three outcomes:
+    1. **Authenticated Result:** Returns a populated `Authentication` with `isAuthenticated() == true`.
+    2. **Abstain (`null`):** Returns `null` if it cannot handle this specific request instance (e.g., wrong tenant or issuer), signaling `ProviderManager` to try the next supporting provider.
+    3. **Authentication Failure:** Throws a concrete `AuthenticationException` (e.g., `BadCredentialsException`, `LockedException`, `DisabledException`).
+
+#### Username/Password Authentication Walkthrough (`DaoAuthenticationProvider`, `UserDetailsService` & `PasswordEncoder`)
+1. **Unauthenticated Request Token:** `UsernamePasswordAuthenticationFilter` (form login) or a custom `/api/auth/login` controller constructs `UsernamePasswordAuthenticationToken.unauthenticated(username, rawPassword)` (`isAuthenticated() == false`) and calls `authenticationManager.authenticate(requestToken)`.
+2. **Provider Selection:** `ProviderManager` queries `supports(UsernamePasswordAuthenticationToken.class)` and delegates to [`DaoAuthenticationProvider`](https://docs.spring.io/spring-security/reference/api/java/org/springframework/security/authentication/dao/DaoAuthenticationProvider.html) (subclass of `AbstractUserDetailsAuthenticationProvider`).
+3. **User Lookup (`UserDetailsService`):** Inside `retrieveUser(...)`, `DaoAuthenticationProvider` calls `UserDetailsService.loadUserByUsername(username)` to fetch a `UserDetails` record (stored password hash, `GrantedAuthority` roles/permissions, and account status flags). If missing, `UsernameNotFoundException` is thrown (translated to `BadCredentialsException` by default when `hideUserNotFoundExceptions = true` to prevent username enumeration).
+4. **Account & Password Verification (`PasswordEncoder`):**
+   - `PreAuthenticationChecks` verifies `isAccountNonLocked()`, `isEnabled()`, and `isAccountNonExpired()` before checking the password (avoiding unnecessary hash computation on locked/disabled accounts).
+   - `additionalAuthenticationChecks(...)` delegates to `PasswordEncoder.matches(rawPassword, userDetails.getPassword())` (e.g., `BCryptPasswordEncoder` or `Argon2PasswordEncoder`). On mismatch, throws `BadCredentialsException`.
+   - `PostAuthenticationChecks` verifies `isCredentialsNonExpired()`, optionally runs `CompromisedPasswordChecker`, and upgrades legacy hashes via `UserDetailsPasswordService` when configured.
+5. **Result or Exception:** On success, `createSuccessAuthentication(...)` returns a new `UsernamePasswordAuthenticationToken.authenticated(userDetails, null, authorities)` (`isAuthenticated() == true`) with credentials erased; on failure, an `AuthenticationException` propagates back to the caller.
+
+#### `AuthenticationManager` Scope vs. Caller Responsibility
+- **`AuthenticationManager`'s Job:** Strictly validates credentials and returns an authenticated `Authentication` (or throws `AuthenticationException`). It never mutates `SecurityContextHolder`, creates HTTP sessions, or generates JWTs.
+- **Caller's Responsibility After `authenticate(...)` Returns:**
+  - **Servlet Filter / Stateful Session Flow (`AbstractAuthenticationProcessingFilter`):** Stores the returned `Authentication` in `SecurityContextHolder.getContext().setAuthentication(authResult)`, persists it via `SecurityContextRepository` (e.g., `HttpSessionSecurityContextRepository`), and invokes `AuthenticationSuccessHandler`.
+  - **Stateless REST / JWT Login Controller (`POST /api/auth/login`):** Extracts the `UserDetails` principal and authorities from the returned `Authentication`, signs and returns a JWT (see [End-to-End JWT Authentication Lifecycle (Login to Verification)](#end-to-end-jwt-authentication-lifecycle-login-to-verification)), and optionally populates `SecurityContextHolder` for the remainder of that request[cite: 7].
+
+#### Version-Dependent Configuration (Spring Boot 3.x / Security 6+ vs. Legacy 2.x)
+- **Spring Boot 3.x / Spring Security 6.x+ (Current Component Model):**
+  - `WebSecurityConfigurerAdapter` is removed[cite: 7]. Expose `AuthenticationManager` via `AuthenticationConfiguration` or construct a `ProviderManager` bean explicitly:
+  ```java
+  // Option A: Obtain auto-configured AuthenticationManager (Spring Boot 3+ / Security 6+)
+  @Bean
+  public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
+      return config.getAuthenticationManager();
+  }
+
+  // Option B: Explicit ProviderManager + DaoAuthenticationProvider wiring
+  @Bean
+  public AuthenticationManager explicitAuthenticationManager(
+          UserDetailsService userDetailsService,
+          PasswordEncoder passwordEncoder) {
+      // Spring Security 6.4+ / 7.x provides DaoAuthenticationProvider(UserDetailsService);
+      // in Spring Security 6.0–6.3, use new DaoAuthenticationProvider() + setUserDetailsService(...)
+      DaoAuthenticationProvider provider = new DaoAuthenticationProvider(userDetailsService);
+      provider.setPasswordEncoder(passwordEncoder);
+      return new ProviderManager(provider);
+  }
+  ```
+- **Spring Boot 2.x / Spring Security 5.x (Legacy):** Configured via `AuthenticationManagerBuilder` inside `WebSecurityConfigurerAdapter` and exposed by overriding `authenticationManagerBean()`.
+
+#### Official References
+- [Spring Security Reference — Servlet Authentication Architecture](https://docs.spring.io/spring-security/reference/servlet/authentication/architecture.html)
+- [Spring Security Reference — `DaoAuthenticationProvider`](https://docs.spring.io/spring-security/reference/servlet/authentication/passwords/dao-authentication-provider.html)
+- [`AuthenticationManager` Javadoc](https://docs.spring.io/spring-security/reference/api/java/org/springframework/security/authentication/AuthenticationManager.html)
+- [`ProviderManager` Javadoc](https://docs.spring.io/spring-security/reference/api/java/org/springframework/security/authentication/ProviderManager.html)
+- [`AuthenticationProvider` Javadoc](https://docs.spring.io/spring-security/reference/api/java/org/springframework/security/authentication/AuthenticationProvider.html)
+- [`DaoAuthenticationProvider` Javadoc](https://docs.spring.io/spring-security/reference/api/java/org/springframework/security/authentication/dao/DaoAuthenticationProvider.html)
+
+---
+
 ## Token-Based Authentication (JWT)
 
 ### JWT Anatomy (Header, Payload, Cryptographic Signature)
