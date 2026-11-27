@@ -134,3 +134,87 @@ JOIN policies p
 GROUP BY u.id, u.name
 ORDER BY u.id;
 ```
+---
+
+## Finding the Second-Highest and Nth-Highest Salary in SQL
+
+### Edge Cases That Break Naive SQL Queries
+When ranking salaries (or any numeric metric) in SQL, three edge cases determine whether a query is production-safe:
+1. **Duplicate Top Salaries (Ties):** If two employees share the highest salary (`100000`, `100000`, `85000`), `ORDER BY salary DESC LIMIT 1 OFFSET 1` falsely returns `100000` instead of `85000` unless `DISTINCT` or `DENSE_RANK()` is used.
+2. **Fewer Than $N$ Distinct Salaries:** If all employees earn the same salary or the table has only one row, the query must return `NULL` (single scalar result) or an empty set rather than failing or returning the top salary.
+3. **NULL Salaries:** In SQL `ORDER BY salary DESC`, some engines (PostgreSQL, Oracle) place `NULL` values **first** by default (`NULLS FIRST`), which can pollute top-$N$ results unless filtered (`WHERE salary IS NOT NULL`) or ordered with `NULLS LAST`.
+
+---
+
+### Four Standard SQL Approaches (with Trade-Offs)
+
+#### Approach 1: Window Function with `DENSE_RANK()` (Recommended for Production & $N$-th Rank)
+Assigns consecutive ranks without gaps across duplicate values, making it trivial to generalize to the $N$-th highest salary or partition per department (`PARTITION BY department_id`).
+```sql
+WITH ranked_salaries AS (
+    SELECT
+        salary,
+        DENSE_RANK() OVER (ORDER BY salary DESC) AS salary_rank
+    FROM employees
+    WHERE salary IS NOT NULL
+)
+SELECT MAX(salary) AS second_highest_salary
+FROM ranked_salaries
+WHERE salary_rank = 2;
+```
+- **Why `MAX(salary)` in the outer query?** If multiple employees tie for 2nd place, `MAX(salary)` collapses duplicates into a single row; if no 2nd rank exists, `MAX(salary)` cleanly returns `NULL`.
+- **Per-Department Extension:** Add `PARTITION BY department_id` inside `OVER (...)` to find the 2nd highest salary within every department in a single scan.
+
+#### Approach 2: Nested `MAX()` Subquery (ANSI SQL Portable, Strictly 2nd Highest)
+Finds the maximum salary strictly less than the global maximum salary.
+```sql
+SELECT MAX(salary) AS second_highest_salary
+FROM employees
+WHERE salary < (SELECT MAX(salary) FROM employees);
+```
+- **Strengths:** Works on every SQL dialect (MySQL, PostgreSQL, Oracle, SQL Server, SQLite), handles ties automatically, and returns `NULL` when no 2nd distinct salary exists.
+- **Limitation:** Does not generalize cleanly beyond $N = 2$ (deeply nested subqueries become unreadable).
+
+#### Approach 3: `DISTINCT` with `LIMIT` / `OFFSET` (or ANSI `FETCH FIRST`)
+Deduplicates salaries first, sorts descending, skips the top row, and picks the next row.
+```sql
+-- PostgreSQL / MySQL
+SELECT (
+    SELECT DISTINCT salary
+    FROM employees
+    WHERE salary IS NOT NULL
+    ORDER BY salary DESC
+    LIMIT 1 OFFSET 1
+) AS second_highest_salary;
+
+-- ANSI SQL Standard (PostgreSQL, Oracle 12c+, SQL Server 2012+)
+SELECT DISTINCT salary AS second_highest_salary
+FROM employees
+WHERE salary IS NOT NULL
+ORDER BY salary DESC
+OFFSET 1 ROWS FETCH NEXT 1 ROWS ONLY;
+```
+- **Note:** Wrapping the query as a scalar subquery `SELECT (...)` ensures `NULL` is returned when fewer than two distinct salaries exist.
+
+#### Approach 4: Correlated Subquery (Classic $N$-th Highest Pattern)
+Counts how many distinct higher salaries exist for each candidate row; for the 2nd highest salary, exactly $N - 1 = 1$ distinct salary is greater.
+```sql
+SELECT DISTINCT e1.salary AS second_highest_salary
+FROM employees e1
+WHERE 1 = (
+    SELECT COUNT(DISTINCT e2.salary)
+    FROM employees e2
+    WHERE e2.salary > e1.salary
+);
+```
+- **Complexity Warning:** Runs in $O(M^2)$ time without an index on `salary`; prefer `DENSE_RANK()` for large tables.
+
+---
+
+### Comparison Summary and Indexing Impact
+| Approach | Handles Ties? | Generalizes to $N$-th / Per-Group? | Performance & Index Usage |
+| :--- | :--- | :--- | :--- |
+| **`DENSE_RANK()` CTE** | Yes | Yes (`salary_rank = N`, `PARTITION BY`) | Single sort/index scan ($O(M \log M)$, or $O(M)$ with a B-Tree index on `salary`) |
+| **Nested `MAX()` Subquery** | Yes | No (best only for $N = 2$) | Two fast B-Tree index boundary lookups ($O(\log M)$ with index on `salary`) |
+| **`DISTINCT` + `OFFSET 1`** | Yes (with `DISTINCT`) | Yes (`OFFSET N - 1`), not per-group | Efficient with index scan on `salary DESC`, degrades for large `OFFSET` |
+| **Correlated Subquery** | Yes (with `DISTINCT`) | Yes (`N - 1 = ...`), not per-group | Poor on large datasets ($O(M^2)$) |

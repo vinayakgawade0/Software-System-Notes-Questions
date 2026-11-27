@@ -53,3 +53,15 @@
 > **Key Nuance / Trade-off:** A critical trap is placing `WHERE e.status = 'ACTIVE'` instead of putting it in the `JOIN ... ON` clause. Placing it in the `WHERE` clause filters rows after the outer join; because users without enrollments produce `NULL` for `e.status`, evaluating `NULL = 'ACTIVE'` yields `UNKNOWN`, discarding those users and accidentally converting the query into an `INNER JOIN`. Furthermore, `COALESCE(SUM(p.premium), 0)` is essential to prevent returning SQL `NULL` values to the application layer.
 
 > **Reference Concept:** `Multi-Table Aggregations: LEFT JOIN, ON Filtering, and COALESCE Handling`
+
+---
+
+### Q. How do you find the second-highest salary in SQL? Explain how your solution handles duplicate salaries, missing second-highest values, and indexing.
+
+**Structured Answer Roadmap (Follow in Sequence):**
+1. **Highlight Edge Cases First:** Refer to [Edge Cases That Break Naive SQL Queries](<./Notes - Database - 4. Query Optimization & Advanced SQL.md#edge-cases-that-break-naive-sql-queries>) — clarify how duplicate top salaries (ties), tables with fewer than two distinct salaries (returning `NULL`), and `NULL` salary values affect correctness.
+2. **Present the Primary Solutions:** Refer to [Four Standard SQL Approaches (with Trade-Offs)](<./Notes - Database - 4. Query Optimization & Advanced SQL.md#four-standard-sql-approaches-with-trade-offs>) — write and walk through:
+   - **Window Function (`DENSE_RANK()`)** as the primary production answer (explaining why `DENSE_RANK()` beats `RANK()` and `ROW_NUMBER()` on ties, and how `PARTITION BY department_id` extends it per department).
+   - **Nested `MAX()` Subquery** (`WHERE salary < (SELECT MAX(salary) ...)`) as the simplest portable ANSI SQL alternative for strictly $N = 2$.
+   - **`DISTINCT` with `LIMIT 1 OFFSET 1`** (wrapped as a scalar subquery so missing 2nd values return `NULL`).
+3. **Conclude With Performance & Indexing:** Refer to [Comparison Summary and Indexing Impact](<./Notes - Database - 4. Query Optimization & Advanced SQL.md#comparison-summary-and-indexing-impact>) — compare time complexity across approaches and note that a B-Tree index on `salary` avoids full table sorts and turns `MAX()` / ordered scans into index lookups.
